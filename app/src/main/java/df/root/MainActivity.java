@@ -128,6 +128,12 @@ public class MainActivity extends Activity implements IReporter {
             outputView.setText("");
             mExec.execute(this::runExploit);
         });
+
+        if (getIntent() != null && getIntent().getBooleanExtra("autorun", false)) {
+            mMain.postDelayed(() -> {
+                if (btnRun.isEnabled()) btnRun.performClick();
+            }, 300);
+        }
     }
 
     @Override
