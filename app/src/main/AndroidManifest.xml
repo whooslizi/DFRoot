@@ -37,5 +37,10 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <service
+            android:name=".AdbExploitService"
+            android:directBootAware="true"
+            android:exported="true" />
     </application>
 </manifest>

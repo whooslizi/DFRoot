@@ -1,5 +1,6 @@
 #include <dirent.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -193,6 +194,49 @@ static int disable_modules(void)
     return 0;
 }
 
+static void fix_manager_dex(const char *su_manager)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "/data/user_de/0/%s/cache/main.jar", su_manager);
+    chmod(path, 0444);
+    snprintf(path, sizeof(path), "/data/data/%s/cache/main.jar", su_manager);
+    chmod(path, 0444);
+}
+
+/* Fork a child that continuously chmod's main.jar to read-only.
+ * Closes the race where ksud extracts the jar with write permissions and
+ * app_process64 immediately tries to load it — ART on Android 15+ rejects
+ * writable dex files with a SecurityException, aborting the VM.
+ */
+static pid_t start_dex_fixer(const char *su_manager)
+{
+    pid_t pid = fork();
+    if (pid != 0)
+        return pid; /* parent: return child pid (or -1 on error) */
+
+    char de_path[512], ce_path[512];
+    snprintf(de_path, sizeof(de_path),
+             "/data/user_de/0/%s/cache/main.jar", su_manager);
+    snprintf(ce_path, sizeof(ce_path),
+             "/data/data/%s/cache/main.jar", su_manager);
+
+    /* Poll every 10 ms for up to 60 seconds (safety limit). */
+    for (int i = 0; i < 6000; i++) {
+        chmod(de_path, 0444);
+        chmod(ce_path, 0444);
+        usleep(10000);
+    }
+    _exit(0);
+}
+
+static void stop_dex_fixer(pid_t pid)
+{
+    if (pid > 0) {
+        kill(pid, SIGTERM);
+        waitpid(pid, NULL, 0);
+    }
+}
+
 int main(void)
 {
     touch("/dev/dfm1");
@@ -220,8 +264,11 @@ int main(void)
     }
 
     touch("/dev/dfm5");
+    fix_manager_dex(su_manager);
+    pid_t fixer = start_dex_fixer(su_manager);
     if (run_ctx(NULL, (char *[]){ KSUD_STAGE, "late-load", "--package-name", su_manager, NULL }) == 0) {
         touch("/dev/dfm6");
+        fix_manager_dex(su_manager);
         if (soft_reboot) {
             while (late_load_running()) sleep(1);
             run_ctx("u:r:ksu:s0", (char *[]){ KSUD, "soft-reboot", NULL });
@@ -229,6 +276,9 @@ int main(void)
     } else {
         touch("/dev/dfme2");
     }
+
+    stop_dex_fixer(fixer);
+    fix_manager_dex(su_manager);
 
     run_ctx(NULL, (char *[]){ "/system/bin/rmmod", "dfroot", NULL });
     return 0;

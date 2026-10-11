@@ -44,13 +44,28 @@ public class MainActivity extends Activity implements IReporter {
     private final Executor mExec = Executors.newSingleThreadExecutor();
     private int mValidSuManagerPos = 0;
 
+    private final StringBuilder mPendingOutput = new StringBuilder();
+    private boolean mScrollScheduled = false;
+
     @Override
     public void report(String msg) {
         Log.i(TAG, msg.trim());
-        mMain.post(() -> {
-            outputView.append(msg);
-            outputScroll.post(() -> outputScroll.fullScroll(View.FOCUS_DOWN));
-        });
+        synchronized (mPendingOutput) {
+            mPendingOutput.append(msg);
+            if (!mScrollScheduled) {
+                mScrollScheduled = true;
+                mMain.postDelayed(() -> {
+                    String toAppend;
+                    synchronized (mPendingOutput) {
+                        toAppend = mPendingOutput.toString();
+                        mPendingOutput.setLength(0);
+                        mScrollScheduled = false;
+                    }
+                    outputView.append(toAppend);
+                    outputScroll.fullScroll(View.FOCUS_DOWN);
+                }, 50);
+            }
+        }
     }
 
     @Override
